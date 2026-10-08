@@ -58,16 +58,79 @@ jobs:
     needs: Build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      # Start from GitHub's auto-generated notes (What's Changed / New
+      # Contributors / Full Changelog) and add a "Thanks" section naming every
+      # PR author who is not a repository collaborator or a bot.
+      - name: Generate release notes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          prev=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          args=(-f tag_name="$TAG")
+          if [ -n "$prev" ]; then
+            args+=(-f previous_tag_name="$prev")
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            "${args[@]}" --jq .body > notes.md
+
+          declare -A prs=()
+          while read -r login num; do
+            prs["$login"]="${prs[$login]:-}${prs[$login]:+, }#${num}"
+          done < <(grep -oE 'by @[A-Za-z0-9_-]+ in https://github\.com/[^ ]+/pull/[0-9]+' notes.md \
+            | sed -E 's#by @([^ ]+) in .*/pull/([0-9]+)#\1 \2#' | sort -u -k1,1 -k2,2n)
+
+          thanks=()
+          for login in "${!prs[@]}"; do
+            case "$login" in
+              dependabot*|renovate*|github-actions*|*\[bot\]) continue ;;
+            esac
+            perm=$(gh api "repos/${GITHUB_REPOSITORY}/collaborators/${login}/permission" \
+              --jq .permission 2>/dev/null || echo none)
+            case "$perm" in
+              admin|maintain|write) continue ;;
+            esac
+            thanks+=("* Thanks @${login} for ${prs[$login]}")
+          done
+
+          if [ "${#thanks[@]}" -gt 0 ]; then
+            if grep -q '^\*\*Full Changelog' notes.md; then
+              {
+                sed '/^\*\*Full Changelog/,$d' notes.md
+                printf '## Thanks\n'
+                printf '%s\n' "${thanks[@]}" | sort
+                printf '\n'
+                grep '^\*\*Full Changelog' notes.md
+              } > notes.out
+            else
+              {
+                cat notes.md
+                printf '\n## Thanks\n'
+                printf '%s\n' "${thanks[@]}" | sort
+              } > notes.out
+            fi
+            mv notes.out notes.md
+          fi
+          echo "::group::Release notes"; cat notes.md; echo "::endgroup::"
+
       - name: Release
         uses: softprops/action-gh-release@v1
         with:
           draft: false
-          generate_release_notes: true
+          body_path: notes.md
           files: dist/*

@@ -240,14 +240,17 @@ func Router(cfg *Config) *gin.Engine {
 		proxyURL := cfg.Proxy
 
 		var translateText string
+		var sourceLang string
 		var targetLang string
 
 		translateText = c.PostForm("text")
+		sourceLang = c.PostForm("source_lang")
 		targetLang = c.PostForm("target_lang")
 
 		if translateText == "" || targetLang == "" {
 			var jsonData struct {
 				Text       []string `json:"text"`
+				SourceLang string   `json:"source_lang"`
 				TargetLang string   `json:"target_lang"`
 			}
 
@@ -260,10 +263,11 @@ func Router(cfg *Config) *gin.Engine {
 			}
 
 			translateText = strings.Join(jsonData.Text, "\n")
+			sourceLang = jsonData.SourceLang
 			targetLang = jsonData.TargetLang
 		}
 
-		result, err := translate.TranslateByDLX("", targetLang, translateText, "", proxyURL, "")
+		result, err := translate.TranslateByDLX(sourceLang, targetLang, translateText, "", proxyURL, "")
 		if err != nil {
 			log.Printf("Translation failed: %s", err)
 			c.JSON(http.StatusInternalServerError, gin.H{

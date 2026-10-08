@@ -195,7 +195,8 @@ var targetLangMap = map[string]string{
 
 // sourceLangMap is what the API accepts as `source_lang`. It is a
 // superset of targetLangMap: EN and PT are first-class source codes
-// mapping to the generic "en"/"pt".
+// mapping to the generic "en"/"pt", and the Chinese codes all map to the
+// generic "zh".
 var sourceLangMap = func() map[string]string {
 	m := make(map[string]string, len(targetLangMap)+2)
 	for k, v := range targetLangMap {
@@ -203,6 +204,13 @@ var sourceLangMap = func() map[string]string {
 	}
 	m["EN"] = "en"
 	m["PT"] = "pt"
+	// DeepL's source codes are the generic language forms. zh-Hans/zh-Hant
+	// are target-only script variants: sent as a source hint they are
+	// silently ignored, so ambiguous mixed-script Chinese fell back to
+	// auto-detection and came back untranslated (#239).
+	m["ZH"] = "zh"
+	m["ZH-HANS"] = "zh"
+	m["ZH-HANT"] = "zh"
 	return m
 }()
 

@@ -1,4 +1,4 @@
-FROM golang:1.25 AS builder
+FROM golang:1.27 AS builder
 WORKDIR /go/src/github.com/OwO-Network/DLX
 COPY . .
 RUN go get -d -v ./

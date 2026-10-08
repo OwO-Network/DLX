@@ -1,6 +1,6 @@
 module github.com/OwO-Network/DLX
 
-go 1.25.0
+go 1.27.0
 
 require (
 	github.com/andybalholm/brotli v1.2.2

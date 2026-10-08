@@ -42,8 +42,11 @@ import (
 // traffic hard; oneshot lives on a separate pool and accepts the literal
 // header `Authorization: None` for free requests.
 //
-// Request shape reverse-engineered from DeepL iOS 26.42 (build 5443737,
-// bundle com.linguee.DeepLMobileTranslator, IPA Info.plist + ItaClient.framework):
+// Request shape reverse-engineered from the DeepL iOS client (bundle
+// com.linguee.DeepLMobileTranslator, IPA Info.plist + ItaClient.framework).
+// The advertised app version is resolved at runtime from the App Store
+// (appversion.go) so a DeepL release cannot silently invalidate the profile;
+// iosAppVersion below is only the fallback.
 //
 //   Transport
 //     ItaClient oneshot uses Ktor Darwin engine
@@ -73,7 +76,9 @@ const (
 	oneshotFreeEndpoint = "https://oneshot-free.www.deepl.com/v1/translate"
 	oneshotProEndpoint  = "https://oneshot-pro.www.deepl.com/v1/translate"
 
-	// Pinned to DeepL iOS IPA (CFBundleShortVersionString / CFBundleVersion).
+	// Fallback DeepL iOS version, used only when the runtime App Store
+	// lookup fails (appversion.go). The build number stays pinned because
+	// Apple's lookup API does not expose CFBundleVersion.
 	iosAppVersion = "26.42"
 	iosAppBuild   = "5443737"
 
@@ -305,12 +310,13 @@ func newOneshotClient(proxyURL string) (*req.Client, error) {
 	//   - TLS ClientHello ≈ real iOS (utls HelloIOS_Auto)
 	//   - Cookie jar shared like URLSession's HTTPCookieStorage
 	//   - Common headers = what URLSession attaches by default
-	// Per-request headers (Authorization, x-app-*) are set in callOneshot.
+	// Per-request headers (Authorization, User-Agent, x-app-*) are set in
+	// callOneshot; the client-level User-Agent is only a default.
 	client := req.C().
 		SetTLSFingerprintIOS().
 		SetCookieJar(sharedCookieJar()).
 		SetTimeout(oneshotTimeout).
-		SetUserAgent(iosUserAgent()).
+		SetUserAgent(iosUserAgent(iosAppVersion)).
 		// URLSession default Accept-Encoding for data tasks.
 		SetCommonHeader("Accept-Encoding", "gzip, deflate, br").
 		SetCommonHeader("Accept", "*/*").
@@ -332,10 +338,10 @@ func newOneshotClient(proxyURL string) (*req.Client, error) {
 // Darwin stack emits (CFBundleName/CFBundleShortVersionString + CFNetwork
 // + Darwin). Do NOT invent alternate formats (e.g. embedding the bundle
 // ID) — mismatched UA + iOS TLS fingerprint is a cheap ban signal.
-func iosUserAgent() string {
+func iosUserAgent(appVersion string) string {
 	return fmt.Sprintf(
 		"DeepL/%s CFNetwork/%s Darwin/%s",
-		iosAppVersion, iosCFNetworkVersion, iosDarwinVersion,
+		appVersion, iosCFNetworkVersion, iosDarwinVersion,
 	)
 }
 
@@ -343,7 +349,9 @@ func iosUserAgent() string {
 // For anonymous traffic bearerToken is empty and we send the literal
 // header `Authorization: None` — matching ItaClient.LoginNone. Omitting
 // that header puts the request on a different server-side auth branch.
-func callOneshot(endpoint string, body []byte, bearerToken, proxyURL string) (gjson.Result, int, error) {
+// appVersion is the value the request body advertises; the same value is
+// echoed in the User-Agent so TLS, UA and app_information stay consistent.
+func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion string) (gjson.Result, int, error) {
 	client, err := getOneshotClient(proxyURL)
 	if err != nil {
 		return gjson.Result{}, 0, err
@@ -359,6 +367,7 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL string) (gj
 		DisableAutoReadResponse().
 		SetHeader("Content-Type", "application/json").
 		SetHeader("Authorization", authValue).
+		SetHeader("User-Agent", iosUserAgent(appVersion)).
 		// ClientInfos.appHeaders (Util/ClientInfos.swift) — only these three
 		// x-app-* keys exist in the iOS binary.
 		SetHeader("x-app-os-version", iosOSVersion).
@@ -435,6 +444,10 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 	// official v2 API does — ignored upstream.
 	_ = tagHandling
 
+	// Resolve the advertised version once per request so the User-Agent and
+	// app_information always agree; the lookup itself is cached (appversion.go).
+	appVersion := currentIOSAppVersion()
+
 	reqStruct := oneshotRequest{
 		Text:       []string{text},
 		TargetLang: resolvedTarget,
@@ -444,7 +457,7 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 		AppInformation: appInformation{
 			OS:         "iOS",
 			OSVersion:  iosOSVersion,
-			AppVersion: iosAppVersion,
+			AppVersion: appVersion,
 			AppBuild:   iosAppBuild,
 			InstanceID: instanceID,
 		},
@@ -457,7 +470,7 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 	}
 
 	id := time.Now().UnixMilli()
-	result, status, err := callOneshot(endpoint, bodyBytes, dlSession, proxyURL)
+	result, status, err := callOneshot(endpoint, bodyBytes, dlSession, proxyURL, appVersion)
 	if err != nil {
 		// Map upstream timeouts to 504 so callers can distinguish "DeepL
 		// took too long" from other 503 failure modes (DNS, TLS, etc.).

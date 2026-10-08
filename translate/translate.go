@@ -74,7 +74,11 @@ const (
 	oneshotProEndpoint  = "https://oneshot-pro.www.deepl.com/v1/translate"
 
 	// Pinned to DeepL iOS IPA (CFBundleShortVersionString / CFBundleVersion).
-	iosAppVersion = "26.42"
+	// This has to track DeepL's current App Store release: a version that is no
+	// longer current is rejected the same way as a future one — every request
+	// comes back HTTP 429 ("your IP has been blocked by DeepL temporarily"),
+	// from any IP, direct or proxied. Bump it when DeepL ships a new build.
+	iosAppVersion = "26.52"
 	iosAppBuild   = "5443737"
 
 	// Reported OS version for app_information.os_version + x-app-os-version.

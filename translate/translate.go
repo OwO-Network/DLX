@@ -440,26 +440,19 @@ func textLength(text string) int {
 }
 
 // textsToTranslate returns the positions of the texts that carry something to
-// translate and their total length in UTF-16 code units, and whether the request
-// holds any text at all.
-//
-// A blank text — empty, or nothing but whitespace — carries nothing to
-// translate, so it is not sent: its own text is the answer, which keeps a
-// segmented document position-aligned instead of failing the whole request.
-// Whitespace is still text, so only a request whose texts are all empty is a
-// request with nothing to translate.
-func textsToTranslate(texts []string) (positions []int, total int, hasText bool) {
+// translate and their total length in UTF-16 code units. A blank text — empty,
+// or nothing but whitespace — carries nothing to translate, so it is not sent:
+// its own text is the answer, which keeps a segmented document position-aligned
+// and lets an empty line pass through instead of failing the request.
+func textsToTranslate(texts []string) (positions []int, total int) {
 	for i, text := range texts {
-		if text != "" {
-			hasText = true
-		}
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
 		positions = append(positions, i)
 		total += textLength(text)
 	}
-	return positions, total, hasText
+	return positions, total
 }
 
 // mergeTranslations puts the translations back at the positions they were asked
@@ -502,16 +495,20 @@ func translationsFromResult(result gjson.Result, count int) ([]string, error) {
 // to the Pro endpoint; the value is sent verbatim as the Bearer token (i.e.
 // it must be an OAuth access token, not the legacy dl_session cookie).
 func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling string, proxyURL string, dlSession string) (DLXTranslationResult, error) {
-	// oneshot charges its anonymous cap against the total length of the
-	// `text` array, and a batch is one upstream request, so the cap applies
-	// to the sum of the texts that are actually sent.
-	positions, totalLength, hasText := textsToTranslate(texts)
-	if !hasText {
+	// A request that names no text at all is not a translation request; any
+	// text, blank or not, is answered. A missing or null `text` decodes to the
+	// one empty string, so this is the empty array.
+	if len(texts) == 0 {
 		return DLXTranslationResult{
 			Code:    http.StatusNotFound,
 			Message: "No text to translate",
 		}, nil
 	}
+
+	// oneshot charges its anonymous cap against the total length of the
+	// `text` array, and a batch is one upstream request, so the cap applies
+	// to the sum of the texts that are actually sent.
+	positions, totalLength := textsToTranslate(texts)
 
 	resolvedTarget, err := resolveTargetLang(targetLang)
 	if err != nil {
@@ -535,10 +532,9 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 		}, nil
 	}
 
-	// Nothing to translate, but text was requested: every text is blank, so
-	// none of them travels and the request is answered with its own texts,
-	// exactly as a blank element is inside a request that does have something
-	// to translate.
+	// Nothing to translate: every text is blank, so none of them travels and
+	// the request is answered with its own texts, exactly as a blank element
+	// is inside a request that does have something to translate.
 	if len(positions) == 0 {
 		return DLXTranslationResult{
 			Code:         http.StatusOK,

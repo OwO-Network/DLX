@@ -16,11 +16,15 @@ package translate
 // handlers in the service package. The structure predates the migration to
 // the iOS oneshot endpoint; Alternatives is now always empty because oneshot
 // does not return alternative translations, and ID is synthesized from time.
+//
+// Data holds one translation per requested text, in request order. The
+// handlers render it as a bare string when the caller sent a bare string in
+// `text` and as an array of the same length when the caller sent an array.
 type DLXTranslationResult struct {
 	Code         int      `json:"code"`
 	ID           int64    `json:"id"`
 	Message      string   `json:"message,omitempty"`
-	Data         string   `json:"data"`
+	Data         []string `json:"data"`
 	Alternatives []string `json:"alternatives"`
 	SourceLang   string   `json:"source_lang"`
 	TargetLang   string   `json:"target_lang"`

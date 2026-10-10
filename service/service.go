@@ -13,6 +13,8 @@
 package service
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -74,6 +76,47 @@ type PayloadAPI struct {
 	TagHandling string   `json:"tag_handling"`
 }
 
+// PayloadTranslate is the request body of POST /translate. Unlike PayloadFree
+// (shared with the Pro endpoint), `text` accepts either a single string or an
+// array of strings.
+type PayloadTranslate struct {
+	Text        PayloadText `json:"text"`
+	SourceLang  string      `json:"source_lang"`
+	TargetLang  string      `json:"target_lang"`
+	TagHandling string      `json:"tag_handling"`
+}
+
+// PayloadText is the `text` field of POST /translate, in either documented
+// shape: a bare JSON string or an array of strings. Both are normalized to
+// Texts, and Batch records which shape the caller used so the response can
+// mirror it. Any other shape (a number, an object, an array holding
+// non-strings) fails the payload decode, which the handler reports as
+// 400 Invalid request payload; null decodes to the empty string exactly as it
+// did when text was a plain string.
+type PayloadText struct {
+	Texts []string
+	Batch bool
+}
+
+// UnmarshalJSON implements json.Unmarshaler.
+func (p *PayloadText) UnmarshalJSON(data []byte) error {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '[' {
+		var texts []string
+		if err := json.Unmarshal(trimmed, &texts); err != nil {
+			return err
+		}
+		p.Texts, p.Batch = texts, true
+		return nil
+	}
+
+	var text string
+	if err := json.Unmarshal(data, &text); err != nil {
+		return err
+	}
+	p.Texts, p.Batch = []string{text}, false
+	return nil
+}
+
 func Router(cfg *Config) *gin.Engine {
 	// Set Proxy
 	proxyURL := os.Getenv("PROXY")
@@ -107,7 +150,7 @@ func Router(cfg *Config) *gin.Engine {
 
 	// Free API endpoint, No Pro Account required
 	r.POST("/translate", authMiddleware(cfg), func(c *gin.Context) {
-		req := PayloadFree{}
+		req := PayloadTranslate{}
 		if err := c.BindJSON(&req); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    http.StatusBadRequest,
@@ -118,7 +161,7 @@ func Router(cfg *Config) *gin.Engine {
 
 		sourceLang := req.SourceLang
 		targetLang := req.TargetLang
-		translateText := req.TransText
+		texts := req.Text.Texts
 		tagHandling := req.TagHandling
 
 		proxyURL := cfg.Proxy
@@ -131,7 +174,7 @@ func Router(cfg *Config) *gin.Engine {
 			return
 		}
 
-		result, err := translate.TranslateByDLX(sourceLang, targetLang, translateText, tagHandling, proxyURL, "")
+		result, err := translate.TranslateByDLX(sourceLang, targetLang, texts, tagHandling, proxyURL, "")
 		if err != nil {
 			log.Printf("Translation failed: %s", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -142,15 +185,22 @@ func Router(cfg *Config) *gin.Engine {
 		}
 
 		if result.Code == http.StatusOK {
-			c.JSON(http.StatusOK, gin.H{
+			response := gin.H{
 				"code":         http.StatusOK,
 				"id":           result.ID,
-				"data":         result.Data,
 				"alternatives": result.Alternatives,
 				"source_lang":  result.SourceLang,
 				"target_lang":  result.TargetLang,
 				"method":       result.Method,
-			})
+			}
+			// Mirror the request: a string in `text` answers with a string
+			// in `data`, an array answers with a position-aligned array.
+			if req.Text.Batch {
+				response["data"] = result.Data
+			} else {
+				response["data"] = result.Data[0]
+			}
+			c.JSON(http.StatusOK, response)
 		} else {
 			c.JSON(result.Code, gin.H{
 				"code":    result.Code,
@@ -206,7 +256,7 @@ func Router(cfg *Config) *gin.Engine {
 			return
 		}
 
-		result, err := translate.TranslateByDLX(sourceLang, targetLang, translateText, tagHandling, proxyURL, dlSession)
+		result, err := translate.TranslateByDLX(sourceLang, targetLang, []string{translateText}, tagHandling, proxyURL, dlSession)
 		if err != nil {
 			log.Printf("Translation failed: %s", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -220,7 +270,7 @@ func Router(cfg *Config) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{
 				"code":         http.StatusOK,
 				"id":           result.ID,
-				"data":         result.Data,
+				"data":         result.Data[0],
 				"alternatives": result.Alternatives,
 				"source_lang":  result.SourceLang,
 				"target_lang":  result.TargetLang,
@@ -267,7 +317,7 @@ func Router(cfg *Config) *gin.Engine {
 			targetLang = jsonData.TargetLang
 		}
 
-		result, err := translate.TranslateByDLX(sourceLang, targetLang, translateText, "", proxyURL, "")
+		result, err := translate.TranslateByDLX(sourceLang, targetLang, []string{translateText}, "", proxyURL, "")
 		if err != nil {
 			log.Printf("Translation failed: %s", err)
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -282,7 +332,7 @@ func Router(cfg *Config) *gin.Engine {
 				"translations": []map[string]interface{}{
 					{
 						"detected_source_language": result.SourceLang,
-						"text":                     result.Data,
+						"text":                     result.Data[0],
 					},
 				},
 			})

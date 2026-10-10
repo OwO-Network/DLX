@@ -28,6 +28,8 @@ func TestPayloadTextUnmarshalJSON(t *testing.T) {
 		{name: "empty array", payload: `{"text":[]}`, wantTexts: []string{}, wantBatch: true},
 		{name: "null", payload: `{"text":null}`, wantTexts: nil},
 		{name: "no text field", payload: `{}`, wantTexts: nil},
+		{name: "null element", payload: `{"text":[null]}`, wantErr: true},
+		{name: "null among strings", payload: `{"text":["Hello",null]}`, wantErr: true},
 		{name: "number", payload: `{"text":1}`, wantErr: true},
 		{name: "object", payload: `{"text":{}}`, wantErr: true},
 		{name: "mixed array", payload: `{"text":["Hello",1]}`, wantErr: true},
@@ -70,6 +72,7 @@ func TestTranslateHandlerAnswersEmptyText(t *testing.T) {
 		{"empty string", `{"text":"","target_lang":"EN"}`, http.StatusOK, `"data":""`},
 		{"null", `{"text":null,"target_lang":"EN"}`, http.StatusBadRequest, `Invalid request payload`},
 		{"array of empty", `{"text":[""],"target_lang":"EN"}`, http.StatusOK, `"data":[""]`},
+		{"null element", `{"text":[null],"target_lang":"EN"}`, http.StatusBadRequest, `Invalid request payload`},
 		{"no text field", `{"target_lang":"EN"}`, http.StatusBadRequest, `Invalid request payload`},
 	}
 	for _, tt := range tests {

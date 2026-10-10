@@ -90,7 +90,7 @@ curl -X POST http://localhost:1188/translate \
 Batch limits and failure modes:
 
 - The anonymous limit is **1500 characters for the whole request**, counted in UTF-16 code units — what JavaScript's `String.prototype.length` reports, so a CJK character costs 1 and an astral one (emoji, historic scripts) costs 2 — across every text in the array, not 1500 per text. A batch over that total is rejected with `413` and `text exceeds maximum length: N characters (anonymous oneshot limit is 1500)`, so a large batch has to be chunked by total length rather than by segment count. There is no separate cap on the number of texts.
-- A blank text — empty, or nothing but whitespace — is answered with itself and never sent, so a blank line in a segmented document keeps its place instead of failing the request. `"text": []` is answered with `{"data": []}`; a body with no `text` field at all is rejected with `400 {"code":400,"message":"Invalid request payload"}`.
+- A blank text — empty, or nothing but whitespace — is answered with itself and never sent, so a blank line in a segmented document keeps its place instead of failing the request. `"text": []` is answered with `{"data": []}`; a body with no `text` field at all, or `"text": null`, is rejected with `400 {"code":400,"message":"Invalid request payload"}`.
 - A batch is all-or-nothing: if DeepL returns a different number of translations or leaves one of them empty, the request fails with `503 {"code":503,"message":"Translation failed"}` instead of answering with placeholders or a shorter, misaligned array.
 
 ## Discussion Group

@@ -439,21 +439,39 @@ func textLength(text string) int {
 	return n
 }
 
-// totalTextLength returns the total length of texts in UTF-16 code units. ok is
-// false when no text was requested or any of them is empty, which callers
-// report as "No text to translate" — an empty element fails the batch as a
-// whole rather than being skipped or translated as an empty segment.
-func totalTextLength(texts []string) (total int, ok bool) {
-	if len(texts) == 0 {
-		return 0, false
-	}
-	for _, text := range texts {
-		if text == "" {
-			return 0, false
+// textsToTranslate returns the positions of the texts that carry something to
+// translate and their total length in UTF-16 code units, and whether the request
+// holds any text at all.
+//
+// A blank text — empty, or nothing but whitespace — carries nothing to
+// translate, so it is not sent: its own text is the answer, which keeps a
+// segmented document position-aligned instead of failing the whole request.
+// Whitespace is still text, so only a request whose texts are all empty is a
+// request with nothing to translate.
+func textsToTranslate(texts []string) (positions []int, total int, hasText bool) {
+	for i, text := range texts {
+		if text != "" {
+			hasText = true
 		}
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		positions = append(positions, i)
 		total += textLength(text)
 	}
-	return total, true
+	return positions, total, hasText
+}
+
+// mergeTranslations puts the translations back at the positions they were asked
+// for, leaving every text that was not sent — a blank one — exactly as it
+// arrived.
+func mergeTranslations(texts []string, positions []int, translations []string) []string {
+	merged := make([]string, len(texts))
+	copy(merged, texts)
+	for i, position := range positions {
+		merged[position] = translations[i]
+	}
+	return merged
 }
 
 // translationsFromResult extracts exactly count non-empty translations from
@@ -486,9 +504,9 @@ func translationsFromResult(result gjson.Result, count int) ([]string, error) {
 func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling string, proxyURL string, dlSession string) (DLXTranslationResult, error) {
 	// oneshot charges its anonymous cap against the total length of the
 	// `text` array, and a batch is one upstream request, so the cap applies
-	// to the sum of the requested texts rather than to each text.
-	totalLength, ok := totalTextLength(texts)
-	if !ok {
+	// to the sum of the texts that are actually sent.
+	positions, totalLength, hasText := textsToTranslate(texts)
+	if !hasText {
 		return DLXTranslationResult{
 			Code:    http.StatusNotFound,
 			Message: "No text to translate",
@@ -517,6 +535,22 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 		}, nil
 	}
 
+	// Nothing to translate, but text was requested: every text is blank, so
+	// none of them travels and the request is answered with its own texts,
+	// exactly as a blank element is inside a request that does have something
+	// to translate.
+	if len(positions) == 0 {
+		return DLXTranslationResult{
+			Code:         http.StatusOK,
+			ID:           time.Now().UnixMilli(),
+			Data:         append([]string(nil), texts...),
+			Alternatives: nil, // oneshot does not return alternatives
+			SourceLang:   sourceLang,
+			TargetLang:   targetLang,
+			Method:       map[bool]string{true: "Pro", false: "Free"}[dlSession != ""],
+		}, nil
+	}
+
 	// tagHandling is accepted by the public DLX API for compatibility
 	// but oneshot does not expose html/xml tag handling the way the
 	// official v2 API does — ignored upstream.
@@ -526,8 +560,16 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 	// app_information always agree; the lookup itself is cached (appversion.go).
 	appVersion := currentIOSAppVersion()
 
+	// Blank texts stay here: oneshot echoes an empty input, and the positional
+	// check on the answer would read that echo as a failed translation and fail
+	// the batch, so there is nothing to gain by sending them.
+	requested := make([]string, 0, len(positions))
+	for _, position := range positions {
+		requested = append(requested, texts[position])
+	}
+
 	reqStruct := oneshotRequest{
-		Text:       texts,
+		Text:       requested,
 		TargetLang: resolvedTarget,
 		SourceLang: resolvedSource, // empty = autodetect; omitempty drops the field
 		// ItaClient.OneShotUsageType.translate (also: ocr, voiceforconversations)
@@ -599,7 +641,7 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 		}, nil
 	}
 
-	data, err := translationsFromResult(result, len(texts))
+	translations, err := translationsFromResult(result, len(requested))
 	if err != nil {
 		return DLXTranslationResult{
 			ID:      id,
@@ -615,7 +657,7 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 	return DLXTranslationResult{
 		Code:         http.StatusOK,
 		ID:           id,
-		Data:         data,
+		Data:         mergeTranslations(texts, positions, translations),
 		Alternatives: nil, // oneshot does not return alternatives
 		SourceLang:   sourceLang,
 		TargetLang:   targetLang,

@@ -63,11 +63,35 @@ Download the binary for your platform from [Releases](https://github.com/OwO-Net
 
 ### Translate
 
+`text` accepts either a single string or an array of strings. A string is answered with a string in `data`; an array is answered with a position-aligned array of the same length, and the whole batch travels in a single upstream request.
+
 ```bash
+# Single text
 curl -X POST http://localhost:1188/translate \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello, world!", "source_lang": "EN", "target_lang": "ZH"}'
 ```
+
+```json
+{"alternatives":null,"code":200,"data":"你好，世界！","id":123,"method":"Free","source_lang":"EN","target_lang":"ZH"}
+```
+
+```bash
+# Batch: one entry per text, answers come back in the same order
+curl -X POST http://localhost:1188/translate \
+  -H "Content-Type: application/json" \
+  -d '{"text": ["Hello, world!", "Good morning"], "source_lang": "EN", "target_lang": "ZH"}'
+```
+
+```json
+{"alternatives":null,"code":200,"data":["你好，世界！","早上好"],"id":123,"method":"Free","source_lang":"EN","target_lang":"ZH"}
+```
+
+Batch limits and failure modes:
+
+- The anonymous limit is **1500 characters for the whole request**, counted in Unicode characters (runes) across every text in the array — not 1500 per text. A batch over that total is rejected with `413` and `text exceeds maximum length: N characters (anonymous oneshot limit is 1500)`, so a large batch has to be chunked by total length rather than by segment count. There is no separate cap on the number of texts.
+- A batch is all-or-nothing: if DeepL returns a different number of translations or leaves one of them empty, the request fails with `503 {"code":503,"message":"Translation failed"}` instead of answering with placeholders or a shorter, misaligned array.
+- `"text": []`, and any array containing an empty string, are rejected with the same `404 {"code":404,"message":"No text to translate"}` as `"text": ""`.
 
 ## Discussion Group
 [Telegram Group](https://t.me/+8KDGHKJCxEVkNzll)

@@ -416,12 +416,56 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
 	return gjson.ParseBytes(raw), resp.StatusCode, nil
 }
 
+// totalTextLength returns the total rune count of texts. ok is false when no
+// text was requested or any of them is empty, which callers report as
+// "No text to translate" — an empty element fails the batch as a whole rather
+// than being skipped or translated as an empty segment.
+func totalTextLength(texts []string) (total int, ok bool) {
+	if len(texts) == 0 {
+		return 0, false
+	}
+	for _, text := range texts {
+		if text == "" {
+			return 0, false
+		}
+		total += utf8.RuneCountInString(text)
+	}
+	return total, true
+}
+
+// translationsFromResult extracts exactly count non-empty translations from
+// an oneshot response body. oneshot answers `text` arrays positionally, so a
+// batch is all-or-nothing: if upstream returns a different number of
+// translations or leaves one of them empty, the caller fails as a whole
+// instead of answering with a misaligned list or a placeholder.
+func translationsFromResult(result gjson.Result, count int) ([]string, error) {
+	translations := result.Get("translations").Array()
+	if len(translations) != count {
+		return nil, fmt.Errorf("expected %d translation(s), got %d", count, len(translations))
+	}
+	texts := make([]string, 0, count)
+	for _, translation := range translations {
+		text := translation.Get("text").String()
+		if text == "" {
+			return nil, errors.New("upstream returned an empty translation")
+		}
+		texts = append(texts, text)
+	}
+	return texts, nil
+}
+
 // TranslateByDLX performs translation via the DeepL oneshot endpoint.
-// Passing dlSession switches to the Pro endpoint; the value is sent
-// verbatim as the Bearer token (i.e. it must be an OAuth access token,
-// not the legacy dl_session cookie).
-func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, proxyURL string, dlSession string) (DLXTranslationResult, error) {
-	if text == "" {
+// texts holds one or more source strings: oneshot's `text` body field is an
+// array, so a whole batch travels in a single upstream request and the
+// returned Data stays position-aligned with texts. Passing dlSession switches
+// to the Pro endpoint; the value is sent verbatim as the Bearer token (i.e.
+// it must be an OAuth access token, not the legacy dl_session cookie).
+func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling string, proxyURL string, dlSession string) (DLXTranslationResult, error) {
+	// oneshot charges its anonymous cap against the total length of the
+	// `text` array, and a batch is one upstream request, so the cap applies
+	// to the sum of the requested texts rather than to each text.
+	totalLength, ok := totalTextLength(texts)
+	if !ok {
 		return DLXTranslationResult{
 			Code:    http.StatusNotFound,
 			Message: "No text to translate",
@@ -443,10 +487,10 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 		}, nil
 	}
 
-	if n := utf8.RuneCountInString(text); n > maxFreeTextLength {
+	if totalLength > maxFreeTextLength {
 		return DLXTranslationResult{
 			Code:    http.StatusRequestEntityTooLarge,
-			Message: fmt.Sprintf("text exceeds maximum length: %d characters (anonymous oneshot limit is %d)", n, maxFreeTextLength),
+			Message: fmt.Sprintf("text exceeds maximum length: %d characters (anonymous oneshot limit is %d)", totalLength, maxFreeTextLength),
 		}, nil
 	}
 
@@ -460,7 +504,7 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 	appVersion := currentIOSAppVersion()
 
 	reqStruct := oneshotRequest{
-		Text:       []string{text},
+		Text:       texts,
 		TargetLang: resolvedTarget,
 		SourceLang: resolvedSource, // empty = autodetect; omitempty drops the field
 		// ItaClient.OneShotUsageType.translate (also: ocr, voiceforconversations)
@@ -532,8 +576,8 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 		}, nil
 	}
 
-	translations := result.Get("translations").Array()
-	if len(translations) == 0 {
+	data, err := translationsFromResult(result, len(texts))
+	if err != nil {
 		return DLXTranslationResult{
 			ID:      id,
 			Code:    http.StatusServiceUnavailable,
@@ -541,23 +585,14 @@ func TranslateByDLX(sourceLang, targetLang, text string, tagHandling string, pro
 		}, nil
 	}
 
-	mainText := translations[0].Get("text").String()
-	if mainText == "" {
-		return DLXTranslationResult{
-			ID:      id,
-			Code:    http.StatusServiceUnavailable,
-			Message: "Translation failed",
-		}, nil
-	}
-
-	if detected := translations[0].Get("detected_source_language").String(); detected != "" {
+	if detected := result.Get("translations.0.detected_source_language").String(); detected != "" {
 		sourceLang = strings.ToUpper(detected)
 	}
 
 	return DLXTranslationResult{
 		Code:         http.StatusOK,
 		ID:           id,
-		Data:         mainText,
+		Data:         data,
 		Alternatives: nil, // oneshot does not return alternatives
 		SourceLang:   sourceLang,
 		TargetLang:   targetLang,

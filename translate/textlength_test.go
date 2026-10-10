@@ -104,12 +104,9 @@ func TestTranslateByDLXRejectsOversizedTextsBeforeUpstream(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			length, ok := totalTextLength(tt.texts)
-			if !ok {
-				t.Fatalf("totalTextLength(%q) reported no text", tt.texts)
-			}
+			_, length := textsToTranslate(tt.texts)
 			if length <= maxFreeTextLength {
-				t.Fatalf("totalTextLength(%q) = %d, which is not over the limit", tt.texts, length)
+				t.Fatalf("textsToTranslate(%q) = %d, which is not over the limit", tt.texts, length)
 			}
 			result, err := TranslateByDLX("", "ZH", tt.texts, "", "", "")
 			if err != nil {

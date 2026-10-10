@@ -91,8 +91,7 @@ type PayloadTranslate struct {
 // Texts, and Batch records which shape the caller used so the response can
 // mirror it. Any other shape (a number, an object, an array holding
 // non-strings) fails the payload decode, which the handler reports as
-// 400 Invalid request payload; null decodes to the empty string exactly as it
-// did when text was a plain string.
+// 400 Invalid request payload; null names no text, like a body without the key.
 type PayloadText struct {
 	Texts []string
 	Batch bool
@@ -100,12 +99,18 @@ type PayloadText struct {
 
 // UnmarshalJSON implements json.Unmarshaler.
 func (p *PayloadText) UnmarshalJSON(data []byte) error {
-	if trimmed := bytes.TrimSpace(data); len(trimmed) > 0 && trimmed[0] == '[' {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
 		var texts []string
 		if err := json.Unmarshal(trimmed, &texts); err != nil {
 			return err
 		}
 		p.Texts, p.Batch = texts, true
+		return nil
+	}
+
+	// A JSON null names no text: leave the zero value, so Texts stays nil.
+	if string(trimmed) == "null" {
 		return nil
 	}
 
@@ -152,6 +157,17 @@ func Router(cfg *Config) *gin.Engine {
 	r.POST("/translate", authMiddleware(cfg), func(c *gin.Context) {
 		req := PayloadTranslate{}
 		if err := c.BindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    http.StatusBadRequest,
+				"message": "Invalid request payload",
+			})
+			return
+		}
+
+		// A body without `text` never named a text to translate, which is a
+		// payload error. `"text": []` names a list that happens to be empty,
+		// and is answered with an empty list, so it is not caught here.
+		if req.Text.Texts == nil {
 			c.JSON(http.StatusBadRequest, gin.H{
 				"code":    http.StatusBadRequest,
 				"message": "Invalid request payload",

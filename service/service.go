@@ -101,9 +101,19 @@ type PayloadText struct {
 func (p *PayloadText) UnmarshalJSON(data []byte) error {
 	trimmed := bytes.TrimSpace(data)
 	if len(trimmed) > 0 && trimmed[0] == '[' {
-		var texts []string
-		if err := json.Unmarshal(trimmed, &texts); err != nil {
+		// Decode through a pointer per element: a JSON null has no effect on a
+		// string, so decoding straight into strings would turn a null element
+		// into "" and let it through as an empty text.
+		var decoded []*string
+		if err := json.Unmarshal(trimmed, &decoded); err != nil {
 			return err
+		}
+		texts := make([]string, len(decoded))
+		for i, text := range decoded {
+			if text == nil {
+				return fmt.Errorf("text[%d] is null", i)
+			}
+			texts[i] = *text
 		}
 		p.Texts, p.Batch = texts, true
 		return nil

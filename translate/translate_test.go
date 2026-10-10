@@ -118,8 +118,6 @@ func TestTranslateByDLXValidationFailsBeforeUpstream(t *testing.T) {
 		texts []string
 		code  int
 	}{
-		{"no texts", nil, http.StatusNotFound},
-		{"empty array", []string{}, http.StatusNotFound},
 		{"over the limit", []string{strings.Repeat("a", maxFreeTextLength+1)}, http.StatusRequestEntityTooLarge},
 		{"batch over the limit", []string{strings.Repeat("a", maxFreeTextLength), "b"}, http.StatusRequestEntityTooLarge},
 		// 751 runes in the batch, but 1502 UTF-16 units: the case a rune count
@@ -141,13 +139,16 @@ func TestTranslateByDLXValidationFailsBeforeUpstream(t *testing.T) {
 }
 
 // Every text is answered — translated when it carries something, returned as it
-// is when it is blank — so only a request that names no text at all is an
-// error, and none of the cases below reaches DeepL.
+// is when it is blank — so nothing about emptiness is an error, and none of the
+// cases below reaches DeepL. Data is always allocated, so an empty request
+// marshals as `[]` rather than `null`.
 func TestTranslateByDLXAnswersBlankTextsWithThemselves(t *testing.T) {
 	tests := []struct {
 		name  string
 		texts []string
 	}{
+		{"no texts", nil},
+		{"empty array", []string{}},
 		{"single empty", []string{""}},
 		{"two empty", []string{"", ""}},
 		{"whitespace only", []string{"  \t "}},
@@ -163,8 +164,16 @@ func TestTranslateByDLXAnswersBlankTextsWithThemselves(t *testing.T) {
 			if result.Code != http.StatusOK {
 				t.Fatalf("TranslateByDLX() code = %d, want %d", result.Code, http.StatusOK)
 			}
-			if !reflect.DeepEqual(result.Data, tt.texts) {
-				t.Fatalf("TranslateByDLX() data = %q, want %q", result.Data, tt.texts)
+			if result.Data == nil {
+				t.Fatal("TranslateByDLX() data = nil, want an allocated slice so it marshals as []")
+			}
+			if len(result.Data) != len(tt.texts) {
+				t.Fatalf("TranslateByDLX() data = %q, want %d element(s)", result.Data, len(tt.texts))
+			}
+			for i, text := range tt.texts {
+				if result.Data[i] != text {
+					t.Fatalf("TranslateByDLX() data[%d] = %q, want %q", i, result.Data[i], text)
+				}
 			}
 		})
 	}

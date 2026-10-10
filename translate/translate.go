@@ -495,16 +495,6 @@ func translationsFromResult(result gjson.Result, count int) ([]string, error) {
 // to the Pro endpoint; the value is sent verbatim as the Bearer token (i.e.
 // it must be an OAuth access token, not the legacy dl_session cookie).
 func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling string, proxyURL string, dlSession string) (DLXTranslationResult, error) {
-	// A request that names no text at all is not a translation request; any
-	// text, blank or not, is answered. A missing or null `text` decodes to the
-	// one empty string, so this is the empty array.
-	if len(texts) == 0 {
-		return DLXTranslationResult{
-			Code:    http.StatusNotFound,
-			Message: "No text to translate",
-		}, nil
-	}
-
 	// oneshot charges its anonymous cap against the total length of the
 	// `text` array, and a batch is one upstream request, so the cap applies
 	// to the sum of the texts that are actually sent.
@@ -533,13 +523,14 @@ func TranslateByDLX(sourceLang, targetLang string, texts []string, tagHandling s
 	}
 
 	// Nothing to translate: every text is blank, so none of them travels and
-	// the request is answered with its own texts, exactly as a blank element
-	// is inside a request that does have something to translate.
+	// the request is answered with its own texts — an empty list in, an empty
+	// list out — exactly as a blank element is inside a request that does have
+	// something to translate.
 	if len(positions) == 0 {
 		return DLXTranslationResult{
 			Code:         http.StatusOK,
 			ID:           time.Now().UnixMilli(),
-			Data:         append([]string(nil), texts...),
+			Data:         mergeTranslations(texts, positions, nil),
 			Alternatives: nil, // oneshot does not return alternatives
 			SourceLang:   sourceLang,
 			TargetLang:   targetLang,

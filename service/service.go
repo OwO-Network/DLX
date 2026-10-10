@@ -159,6 +159,17 @@ func Router(cfg *Config) *gin.Engine {
 			return
 		}
 
+		// A body without `text` never named a text to translate, which is a
+		// payload error. `"text": []` names a list that happens to be empty,
+		// and is answered with an empty list, so it is not caught here.
+		if !req.Text.Batch && len(req.Text.Texts) == 0 {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code":    http.StatusBadRequest,
+				"message": "Invalid request payload",
+			})
+			return
+		}
+
 		sourceLang := req.SourceLang
 		targetLang := req.TargetLang
 		texts := req.Text.Texts

@@ -29,7 +29,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/andybalholm/brotli"
 	"github.com/imroc/req/v3"
@@ -99,8 +98,10 @@ const (
 
 	// oneshot enforces a 1500-character hard cap on the total length of
 	// the `text` array for anonymous traffic (same limit the Chrome
-	// extension documents as G.notLoggedIn). Bail early to spare the
-	// upstream and give the caller a faster error.
+	// extension documents as G.notLoggedIn). A character there is a UTF-16
+	// code unit — what JavaScript's String.prototype.length and Kotlin's
+	// String.length report — so an astral character counts as two. Bail
+	// early to spare the upstream and give the caller a faster error.
 	maxFreeTextLength = 1500
 
 	// oneshotTimeout caps how long we wait on a single translate request.
@@ -416,10 +417,32 @@ func callOneshot(endpoint string, body []byte, bearerToken, proxyURL, appVersion
 	return gjson.ParseBytes(raw), resp.StatusCode, nil
 }
 
-// totalTextLength returns the total rune count of texts. ok is false when no
-// text was requested or any of them is empty, which callers report as
-// "No text to translate" — an empty element fails the batch as a whole rather
-// than being skipped or translated as an empty segment.
+// textLength returns the length of text in UTF-16 code units — the unit
+// oneshot's anonymous 1500-character cap counts, and the one the DeepL clients
+// this profile mirrors report (the iOS app is Kotlin, the extension is
+// JavaScript). An astral character is a surrogate pair and so counts as two,
+// where a rune count scores it one and lets an oversized request travel
+// upstream to be rejected there as a bare 400.
+//
+// Invalid UTF-8 needs no special case: the request body is decoded with
+// encoding/json before this runs, which replaces every invalid byte with
+// U+FFFD, and each replacement is one unit either way.
+func textLength(text string) int {
+	n := 0
+	for _, r := range text {
+		if r > 0xFFFF {
+			n += 2
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
+// totalTextLength returns the total length of texts in UTF-16 code units. ok is
+// false when no text was requested or any of them is empty, which callers
+// report as "No text to translate" — an empty element fails the batch as a
+// whole rather than being skipped or translated as an empty segment.
 func totalTextLength(texts []string) (total int, ok bool) {
 	if len(texts) == 0 {
 		return 0, false
@@ -428,7 +451,7 @@ func totalTextLength(texts []string) (total int, ok bool) {
 		if text == "" {
 			return 0, false
 		}
-		total += utf8.RuneCountInString(text)
+		total += textLength(text)
 	}
 	return total, true
 }

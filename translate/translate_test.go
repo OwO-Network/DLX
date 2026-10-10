@@ -22,8 +22,14 @@ func TestTotalTextLength(t *testing.T) {
 		{"empty element in batch", []string{"Hello", ""}, 0, false},
 		{"single text", []string{"Hello"}, 5, true},
 		{"batch total", []string{"Hello", "Good morning"}, 17, true},
-		{"counts runes, not bytes", []string{"你好"}, 2, true},
+		{"counts UTF-16 units, not bytes", []string{"你好"}, 2, true},
+		{"astral character costs two units", []string{"😀"}, 2, true},
+		{"combining mark is two units, not one grapheme", []string{"e\u0301"}, 2, true},
+		{"invalid UTF-8 counts one unit per byte", []string{"\xf0\x90\x80"}, 3, true},
 		{"at the limit", []string{strings.Repeat("a", maxFreeTextLength)}, maxFreeTextLength, true},
+		{"astral at the limit", []string{strings.Repeat("😀", maxFreeTextLength/2)}, maxFreeTextLength, true},
+		{"astral past the limit", []string{strings.Repeat("😀", maxFreeTextLength/2), "😀"}, maxFreeTextLength + 2, true},
+		{"astral batch sums units, not runes", []string{strings.Repeat("😀", 400), strings.Repeat("😀", 400)}, 1600, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,6 +95,10 @@ func TestTranslateByDLXValidationFailsBeforeUpstream(t *testing.T) {
 		{"empty element in batch", []string{"Hello", ""}, http.StatusNotFound},
 		{"over the limit", []string{strings.Repeat("a", maxFreeTextLength+1)}, http.StatusRequestEntityTooLarge},
 		{"batch over the limit", []string{strings.Repeat("a", maxFreeTextLength), "b"}, http.StatusRequestEntityTooLarge},
+		// 751 runes in the batch, but 1502 UTF-16 units: the case a rune count
+		// let through to be rejected by oneshot instead.
+		{"astral batch over the unit limit", []string{strings.Repeat("😀", maxFreeTextLength/2+1)}, http.StatusRequestEntityTooLarge},
+		{"astral batch split over the unit limit", []string{strings.Repeat("😀", 400), strings.Repeat("😀", 400)}, http.StatusRequestEntityTooLarge},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

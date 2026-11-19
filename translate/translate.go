@@ -52,7 +52,7 @@ import (
 //     (io.ktor.client.engine.darwin.KtorNSURLSessionDelegate) → real
 //     URLSession TLS. We approximate that ClientHello with utls HelloIOS.
 //
-//   Free URL   → https://oneshot-free.www.deepl.com/v1/translate
+//   Free URL   → https://ita-free.www.deepl.com/v1/translate
 //   Pro URL    → https://oneshot. + <cell> + .pro.deepl.com/v1/translate
 //                (we keep oneshot-pro.www as the free-tier Pro fallback)
 //
@@ -72,7 +72,7 @@ import (
 // story is inconsistent (e.g. iOS TLS fingerprint + "iOS 27.0" in the UA when
 // 27 is not a shipping OS). Keep every field on one coherent iOS profile.
 const (
-	oneshotFreeEndpoint = "https://oneshot-free.www.deepl.com/v1/translate"
+	oneshotFreeEndpoint = "https://ita-free.www.deepl.com/v1/translate"
 	oneshotProEndpoint  = "https://oneshot-pro.www.deepl.com/v1/translate"
 
 	// Fallback DeepL iOS version, used only when the runtime App Store
@@ -146,7 +146,7 @@ func sharedCookieJar() http.CookieJar {
 }
 
 // warmCookies primes the shared jar by GETting www.deepl.com once.
-// The Set-Cookie response lands on .deepl.com (eTLD+1 of oneshot-free),
+// The Set-Cookie response lands on .deepl.com (eTLD+1 of both endpoints),
 // so subsequent POSTs carry those cookies automatically.
 func warmCookies(client *req.Client) {
 	cookieWarmer.Do(func() {
